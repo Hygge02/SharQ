@@ -11,18 +11,19 @@ These commands assume:
 ```bash
 conda install pybind11 -y
 
-cmake -S kernels -B kernels/build_cmake_sm120a \
+cmake -S kernels -B kernels/build_cmake_sm100a \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DSHARQ_CUDA_ARCH=sm100a \
   -DPython3_EXECUTABLE=$(which python)
 
-cmake --build kernels/build_cmake_sm120a --target sharq_ops -j
+cmake --build kernels/build_cmake_sm100a --target sharq_ops -j
 ```
 
 The extension is generated at:
 
 ```text
-kernels/build_cmake_sm120a/sharq_ops.so
+kernels/build_cmake_sm100a/sharq_ops.so
 ```
 
 ## Recommended Smoke Tests
@@ -45,6 +46,6 @@ python model/main.py /path/to/model \
 
 ## Notes
 
-- Python-side loaders prefer the repo-local `kernels/build_cmake_sm120a/sharq_ops.so`.
+- Python-side loaders prefer the repo-local `kernels/build_cmake_sm100a/sharq_ops.so`, then fall back to `build_cmake_sm120a` and `build`.
 - `SHARQ` is the fused sparse-residual kernel path used by this repo.
 - `SHARQ_SIM` is the pure PyTorch simulation path and can be used as an accuracy-only reference without building the CUDA extension.

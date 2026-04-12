@@ -33,7 +33,7 @@ using CompressorKernel = cutlass::transform::kernel::StructuredSparseCompressor<
     fp4_t,
     sparse_nvfp4::LayoutATag,
     SparseConfig,
-    cutlass::arch::Sm120>;
+    sparse_nvfp4::CompressorArchTag>;
 using Compressor = cutlass::transform::device::TransformUniversalAdapter<CompressorKernel>;
 
 template <class Layout>

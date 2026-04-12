@@ -11,15 +11,44 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 _THIS_DIR = Path(__file__).resolve().parent
-_LOCAL_KERNEL_BUILD = _THIS_DIR / 'kernels' / 'build_cmake_sm120a'
-if _LOCAL_KERNEL_BUILD.exists():
-    sys.path.insert(0, os.fspath(_LOCAL_KERNEL_BUILD))
+
+
+def _ordered_build_dir_names() -> tuple[str, ...]:
+    if not torch.cuda.is_available():
+        return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+
+    major, _minor = torch.cuda.get_device_capability()
+    if major >= 12:
+        return ("build_cmake_sm120a", "build_cmake_sm100a", "build")
+    if major >= 10:
+        return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+    return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+
+
+def _kernel_build_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    build_dir_names = _ordered_build_dir_names()
+
+    for env_var in ('SHARQ_VLLM_KERNEL_BUILD', 'SHARQ_KERNEL_BUILD'):
+        env_build = os.environ.get(env_var)
+        if env_build:
+            candidates.append(Path(env_build))
+
+    for build_dir_name in build_dir_names:
+        candidates.append(_THIS_DIR / 'kernels' / build_dir_name)
+        candidates.append(Path('/root/autodl-tmp/SharQ/kernels') / build_dir_name)
+
+    return candidates
+
+
+for _candidate in reversed(_kernel_build_candidates()):
+    if _candidate.exists():
+        sys.path.insert(0, os.fspath(_candidate))
 
 try:
     import sharq_ops_vllm as sharq_ops
     print('Success: sharq_ops module loaded.')
 except ImportError:
-    sys.path.append('/root/autodl-tmp/SharQ/kernels/build_cmake_sm120a')
     try:
         import sharq_ops
         print('Success: fallback sharq_ops module loaded.')

@@ -11,23 +11,40 @@ import sys
 _THIS_DIR = Path(__file__).resolve().parent
 
 
+def _ordered_build_dir_names() -> tuple[str, ...]:
+    if not torch.cuda.is_available():
+        return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+
+    major, _minor = torch.cuda.get_device_capability()
+    if major >= 12:
+        return ("build_cmake_sm120a", "build_cmake_sm100a", "build")
+    if major >= 10:
+        return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+    return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+
+
 def _kernel_build_candidates() -> list[Path]:
     candidates: list[Path] = []
+    build_dir_names = _ordered_build_dir_names()
 
-    env_build = os.environ.get("SHARQ_VLLM_KERNEL_BUILD")
-    if env_build:
-        candidates.append(Path(env_build))
+    for env_var in ("SHARQ_VLLM_KERNEL_BUILD", "SHARQ_KERNEL_BUILD"):
+        env_build = os.environ.get(env_var)
+        if env_build:
+            candidates.append(Path(env_build))
 
-    candidates.append(_THIS_DIR / 'kernels' / 'build_cmake_sm120a')
+    for build_dir_name in build_dir_names:
+        candidates.append(_THIS_DIR / 'kernels' / build_dir_name)
 
     for parent in _THIS_DIR.parents:
-        candidates.append(parent / 'temp-vllm' / 'kernels' / 'build_cmake_sm120a')
+        for build_dir_name in build_dir_names:
+            candidates.append(parent / 'temp-vllm' / 'kernels' / build_dir_name)
 
-    candidates.append(Path('/root/autodl-tmp/SharQ/kernels/build_cmake_sm120a'))
+    for build_dir_name in build_dir_names:
+        candidates.append(Path('/root/autodl-tmp/SharQ/kernels') / build_dir_name)
     return candidates
 
 
-for _candidate in _kernel_build_candidates():
+for _candidate in reversed(_kernel_build_candidates()):
     if _candidate.exists():
         sys.path.insert(0, os.fspath(_candidate))
 
@@ -60,7 +77,7 @@ def _round_up(value: int, alignment: int) -> int:
 
 
 def _get_dense_scale_bytes(num_rows: int, k_dim: int) -> int:
-    return ((num_rows // 128) + 1) * 128 * k_dim // 16
+    return _round_up(num_rows, 128) * k_dim // 16
 
 
 def _get_weight_sparse_scale_bytes(output_size: int, input_size: int) -> int:
@@ -95,18 +112,18 @@ def sharq_fused_sparse_residual_quantize_x_fake(
     # Match kernels/include/sparse_nvfp4.h:
     # - A_comp: M * round_up(K, 256) / 4
     # - E: round_up(M, 128) * round_up(K, 256) / 16
-    # - SFA/SF_res: (M // 128 + 1) * 128 * K / 16
+    # - SFA/SF_res: round_up(M, 128) * K / 16
     aligned_tokens_e = _round_up(num_tokens, 128)
     aligned_hidden_a = _round_up(hidden_dim, 256)
     aligned_hidden_e = _round_up(hidden_dim, 256)
-    padded_tokens_scale = (num_tokens // 128 + 1) * 128
+    dense_scale_bytes = _get_dense_scale_bytes(num_tokens, hidden_dim)
     device = x.device
     return (
         torch.empty((num_tokens * aligned_hidden_a // 4,), dtype=torch.uint8, device=device),
         torch.empty((aligned_tokens_e * aligned_hidden_e // 16,), dtype=torch.uint8, device=device),
-        torch.empty((padded_tokens_scale * hidden_dim // 16,), dtype=torch.uint8, device=device),
+        torch.empty((dense_scale_bytes,), dtype=torch.uint8, device=device),
         torch.empty((num_tokens, hidden_dim // 2), dtype=torch.uint8, device=device),
-        torch.empty((padded_tokens_scale * hidden_dim // 16,), dtype=torch.uint8, device=device),
+        torch.empty((dense_scale_bytes,), dtype=torch.uint8, device=device),
         torch.empty((1,), dtype=torch.float32, device=device),
     )
 def sharq_sparse_matmul(
@@ -383,9 +400,6 @@ class SHARQLinearMethod(LinearMethodBase):
         if bias is not None:
             out.add_(bias)
         return out.view(*x.shape[:-1], -1)
-
-
-
 
 
 

@@ -37,3 +37,5 @@ log.txt
 # Editor files
 .vscode/
 **/.vscode/
+
+benchmarks/perf/results/

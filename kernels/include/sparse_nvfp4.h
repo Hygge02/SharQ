@@ -13,6 +13,7 @@
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
 #include "cutlass/transform/kernel/sparse_gemm_compressor.hpp"
 #include "cutlass/util/packed_stride.hpp"
+#include "sharq_blackwell_arch.h"
 
 namespace sparse_nvfp4 {
 
@@ -35,12 +36,12 @@ constexpr int AlignmentD = 128 / cutlass::sizeof_bits<ElementD>::value;
 
 using ElementE = uint8_t;
 using ElementAccumulator = float;
-using ArchTag = cutlass::arch::Sm120;
+using ArchTag = sharq::blackwell_arch::SparseArchTag;
 using OperatorClass = cutlass::arch::OpClassBlockScaledSparseTensorOp;
-using KernelScheduleType = cutlass::gemm::KernelSparseTmaWarpSpecializedNvf4Sm120;
+using KernelScheduleType = sharq::blackwell_arch::SparseKernelSchedule;
 
-using ThreadBlockShape = Shape<_128, _128, _256>;
-using ClusterShape = Shape<_1, _1, _1>;
+using ThreadBlockShape = sharq::blackwell_arch::SparseTileShape;
+using ClusterShape = sharq::blackwell_arch::SparseClusterShape;
 
 using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilder<
     ArchTag, OperatorClass,
@@ -49,7 +50,7 @@ using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBui
     ElementAccumulator, ElementAccumulator,
     ElementC, LayoutCTag, AlignmentC,
     ElementD, LayoutDTag, AlignmentD,
-    cutlass::epilogue::SparseTmaWarpSpecializedCooperativeSm120>::CollectiveOp;
+    sharq::blackwell_arch::SparseEpilogueSchedule>::CollectiveOp;
 
 using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
     ArchTag, OperatorClass,
@@ -71,6 +72,7 @@ using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
 using SparseConfig = typename CollectiveMainloop::SparseConfig;
 using ProblemShape = Shape<int, int, int, int>;
 using DenseStrideA = cutlass::gemm::TagToStrideA_t<LayoutATag>;
+using CompressorArchTag = ArchTag;
 using CompressorUtility = cutlass::transform::kernel::StructuredSparseCompressorUtility<
     ProblemShape,
     cutlass::float_e2m1_t,
@@ -141,11 +143,11 @@ inline size_t get_sfb_numel(int M, int N, int K) {
 }
 
 inline size_t get_sfa_bytes(int M, int N, int K) {
-  return static_cast<size_t>((M / 128 + 1) * 128 * K / 16);
+  return packed_storage_bytes<cutlass::float_ue4m3_t>(get_sfa_numel(M, N, K));
 }
 
 inline size_t get_sfb_bytes(int M, int N, int K) {
-  return static_cast<size_t>((N / 128 + 1) * 128 * K / 16);
+  return packed_storage_bytes<cutlass::float_ue4m3_t>(get_sfb_numel(M, N, K));
 }
 
 void matmul_host_sparse_nvfp4_bf16(

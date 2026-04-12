@@ -47,16 +47,18 @@
         KQ, KE);                                                                                        \
   } break;
 
+template <class Element, class Layout>
+inline size_t layout_storage_bytes(const Layout& layout) {
+  auto logical_elements = static_cast<size_t>(cute::size(cute::filter_zeros(layout)));
+  return (logical_elements * cutlass::sizeof_bits<Element>::value + 7) / 8;
+}
+
 inline size_t get_sfa_buffer_size_in_bytes(int num_rows, int k_dim) {
-  auto layout = filter_zeros(nvfp4::get_layoutSFA(num_rows, k_dim));
-  (void)layout;
-  return (num_rows / 128 + 1) * 128 * k_dim / 16;
+  return layout_storage_bytes<cutlass::float_ue4m3_t>(nvfp4::get_layoutSFA(num_rows, k_dim));
 }
 
 inline size_t get_sfb_buffer_size_in_bytes(int num_rows, int k_dim) {
-  auto layout = filter_zeros(nvfp4::get_layoutSFB(num_rows, k_dim));
-  (void)layout;
-  return (num_rows / 128 + 1) * 128 * k_dim / 16;
+  return layout_storage_bytes<cutlass::float_ue4m3_t>(nvfp4::get_layoutSFB(num_rows, k_dim));
 }
 
 std::tuple<torch::Tensor, torch::Tensor> reorder_quantize_x(
@@ -536,7 +538,7 @@ torch::Tensor sparse_matmul(
   TORCH_CHECK(B.size(1) == expected_b_cols,
               "B.size(1) mismatch: expected ", expected_b_cols, ", got ", B.size(1));
 
-  auto C = torch::zeros({M, N}, torch::dtype(torch::kBFloat16).device(A_comp.device()));
+  auto C = torch::empty({M, N}, torch::dtype(torch::kBFloat16).device(A_comp.device()));
 
   sparse_nvfp4::matmul_host_sparse_nvfp4_bf16(
       reinterpret_cast<cutlass::float_e2m1_t *>(A_comp.data_ptr<uint8_t>()),
@@ -616,4 +618,3 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #undef CASE_REORDER_W_16
 #undef CASE_REORDER_W_32
 #undef CASE_DOWN_W_32
-

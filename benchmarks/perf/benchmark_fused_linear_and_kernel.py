@@ -11,11 +11,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_sharq_ops():
-    build_dir = REPO_ROOT / "kernels" / "build_cmake_sm120a"
-    sys.path.insert(0, str(build_dir))
-    import sharq_ops as backend  # type: ignore
+    repo_root_str = str(REPO_ROOT)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+    from sharq_loader import load_sharq_ops as _load_sharq_ops
 
-    return backend
+    return _load_sharq_ops(repo_root=REPO_ROOT)
 
 
 def bench_cuda(fn, warmup: int, iters: int) -> float:

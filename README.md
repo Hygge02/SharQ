@@ -50,7 +50,7 @@ For kernel structure, build details, and low-level CUDA benchmarks, see [`kernel
 - Python `3.10`
 - PyTorch with CUDA support
 - CUDA `12.8` recommended
-- Blackwell `sm_120a` GPU for the real `SHARQ` kernel path
+- NVIDIA B200 / Blackwell `sm_100a` GPU for the default real `SHARQ` kernel path
 
 Install dependencies:
 
@@ -64,12 +64,19 @@ conda install pybind11 -y
 Build the CUDA extension:
 
 ```bash
-cmake -S kernels -B kernels/build_cmake_sm120a \
+cmake -S kernels -B kernels/build_cmake_sm100a \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DSHARQ_CUDA_ARCH=sm100a \
   -DPython3_EXECUTABLE=$(which python)
 
-cmake --build kernels/build_cmake_sm120a --target sharq_ops -j
+cmake --build kernels/build_cmake_sm100a --target sharq_ops -j
+```
+
+If you are targeting RTX 50 series instead of B200, switch the architecture explicitly:
+
+```bash
+cmake -S kernels -B kernels/build_cmake_sm120a -DSHARQ_CUDA_ARCH=sm120a
 ```
 
 If you only want a numerical reference path, `SHARQ_SIM` does not require the CUDA extension.
