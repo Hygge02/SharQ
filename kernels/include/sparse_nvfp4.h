@@ -143,11 +143,11 @@ inline size_t get_sfb_numel(int M, int N, int K) {
 }
 
 inline size_t get_sfa_bytes(int M, int N, int K) {
-  return packed_storage_bytes<cutlass::float_ue4m3_t>(get_sfa_numel(M, N, K));
+  return static_cast<size_t>((M / 128 + 1) * 128 * K / 16);
 }
 
 inline size_t get_sfb_bytes(int M, int N, int K) {
-  return packed_storage_bytes<cutlass::float_ue4m3_t>(get_sfb_numel(M, N, K));
+  return static_cast<size_t>((N / 128 + 1) * 128 * K / 16);
 }
 
 void matmul_host_sparse_nvfp4_bf16(

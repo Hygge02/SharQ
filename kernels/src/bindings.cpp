@@ -47,18 +47,16 @@
         KQ, KE);                                                                                        \
   } break;
 
-template <class Element, class Layout>
-inline size_t layout_storage_bytes(const Layout& layout) {
-  auto logical_elements = static_cast<size_t>(cute::size(cute::filter_zeros(layout)));
-  return (logical_elements * cutlass::sizeof_bits<Element>::value + 7) / 8;
-}
-
 inline size_t get_sfa_buffer_size_in_bytes(int num_rows, int k_dim) {
-  return layout_storage_bytes<cutlass::float_ue4m3_t>(nvfp4::get_layoutSFA(num_rows, k_dim));
+  auto layout = filter_zeros(nvfp4::get_layoutSFA(num_rows, k_dim));
+  (void)layout;
+  return (num_rows / 128 + 1) * 128 * k_dim / 16;
 }
 
 inline size_t get_sfb_buffer_size_in_bytes(int num_rows, int k_dim) {
-  return layout_storage_bytes<cutlass::float_ue4m3_t>(nvfp4::get_layoutSFB(num_rows, k_dim));
+  auto layout = filter_zeros(nvfp4::get_layoutSFB(num_rows, k_dim));
+  (void)layout;
+  return (num_rows / 128 + 1) * 128 * k_dim / 16;
 }
 
 std::tuple<torch::Tensor, torch::Tensor> reorder_quantize_x(
