@@ -27,6 +27,7 @@ __pycache__/
 
 # Local outputs
 /saved/
+/profiles/
 /results/
 /output/
 *.log
