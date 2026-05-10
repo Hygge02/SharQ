@@ -138,11 +138,15 @@ def _patch_sharq_ops(mode: str):
         wrap_op("fused_sparse_residual_quantize_x", "SHARQ.sharq_kernel")
         wrap_op("fused_rmsnorm_sparse_residual_quantize_x", "SHARQ.sharq_kernel")
         wrap_op("sparse_matmul", "SHARQ.linear_gemm.sparse_nvfp4")
+        wrap_op("sparse_matmul_tensor_scale", "SHARQ.linear_gemm.sparse_nvfp4")
         wrap_op("matmul_accum", "SHARQ.linear_gemm.dense_nvfp4")
+        wrap_op("matmul_accum_tensor_scale", "SHARQ.linear_gemm.dense_nvfp4")
         wrap_op("matmul", "SHARQ.linear_gemm.dense_nvfp4")
+        wrap_op("matmul_tensor_scale", "SHARQ.linear_gemm.dense_nvfp4")
     elif mode == "NVFP4":
         wrap_op("quantize_x_nvfp4", "NVFP4.quantize_kernel")
         wrap_op("matmul", "NVFP4.linear_gemm.dense_nvfp4")
+        wrap_op("matmul_tensor_scale", "NVFP4.linear_gemm.dense_nvfp4")
 
 
 def run_prefill_once(model, input_ids: torch.Tensor, attention_mask: torch.Tensor):

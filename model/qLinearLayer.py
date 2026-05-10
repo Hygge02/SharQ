@@ -15,7 +15,6 @@ from quantize import (
     quantize_weight_nvfp4,
     quantize_weight_sharq_sim,
     quantize_weight_shared_nvfp4,
-    to_python_float,
 )
 
 
@@ -130,9 +129,9 @@ class QLinearLayer(nn.Module):
             y = F.linear(x_q64, self.weight_sim_hif4)
         elif tag == "SHARQ":
             _, a_comp, e, sfa_sparse, qx_res, scale_x_res, scale_x = prepared
-            output_scale = to_python_float(scale_x * self.weight_scale)
+            output_scale = (scale_x * self.weight_scale).contiguous()
             sharq_ops = load_sharq_ops()
-            y_sparse = sharq_ops.sparse_matmul(
+            y_sparse = sharq_ops.sparse_matmul_tensor_scale(
                 a_comp,
                 self.weight_q,
                 e,
@@ -144,7 +143,7 @@ class QLinearLayer(nn.Module):
                 alpha=output_scale,
             )
             if self.extra_fusion:
-                y = sharq_ops.matmul_accum(
+                y = sharq_ops.matmul_accum_tensor_scale(
                     qx_res,
                     self.weight_q,
                     scale_x_res,
@@ -154,7 +153,7 @@ class QLinearLayer(nn.Module):
                     1.0,
                 )
             else:
-                y_res = sharq_ops.matmul(
+                y_res = sharq_ops.matmul_tensor_scale(
                     qx_res,
                     self.weight_q,
                     scale_x_res,
@@ -165,12 +164,12 @@ class QLinearLayer(nn.Module):
         elif tag == "NVFP4":
             _, qx, scale_x, scale = prepared
             sharq_ops = load_sharq_ops()
-            y = sharq_ops.matmul(
+            y = sharq_ops.matmul_tensor_scale(
                 qx,
                 self.weight_q,
                 scale_x,
                 self.scale_w,
-                to_python_float(scale * self.weight_scale),
+                (scale * self.weight_scale).contiguous(),
             )
         else:
             raise ValueError(f"Unsupported prepared input tag: {tag}")

@@ -28,7 +28,7 @@ void run_fused_rmsnorm_sparse_residual_x_bf16_nvfp4(
     bf16_t *hidden_states,
     bf16_t *rmsnorm_weight,
     float *inv_rms,
-    float input_scale,
+    const float *input_scale,
     int seq_len,
     int out_features,
     int hidden_dim,

@@ -134,7 +134,8 @@ cutlass::Status launch_sparse_variant(
     const cutlass::float_ue4m3_t* SFA,
     const cutlass::float_ue4m3_t* SFB,
     float alpha,
-    float beta) {
+    float beta,
+    const float* alpha_ptr) {
   using Gemm = typename KernelTraits::Gemm;
   using SparseConfig = typename KernelTraits::SparseConfig;
   using LayoutA = typename KernelTraits::LayoutA;
@@ -168,10 +169,13 @@ cutlass::Status launch_sparse_variant(
           SFB, layout_SFB,
       },
       {
-          {alpha, beta},
+          {},
           C, stride_C,
           D, stride_D,
       }};
+  arguments.epilogue.thread.alpha = alpha;
+  arguments.epilogue.thread.beta = beta;
+  arguments.epilogue.thread.alpha_ptr = alpha_ptr;
 
   cutlass::Status status = gemm_op.can_implement(arguments);
   if (status != cutlass::Status::kSuccess) {
@@ -202,13 +206,14 @@ cutlass::Status dispatch_sparse_variant(
     const cutlass::float_ue4m3_t* SFA,
     const cutlass::float_ue4m3_t* SFB,
     float alpha,
-    float beta) {
+    float beta,
+    const float* alpha_ptr) {
   switch (variant) {
     case SparseKernelVariant::kBaselineAuto:
-      return launch_sparse_variant<SparseKernelBaseline>(A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta);
+      return launch_sparse_variant<SparseKernelBaseline>(A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta, alpha_ptr);
 #if defined(SHARQ_TARGET_SM100A)
     case SparseKernelVariant::kSmall1Sm128x128x256:
-      return launch_sparse_variant<SparseKernelSmall1Sm>(A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta);
+      return launch_sparse_variant<SparseKernelSmall1Sm>(A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta, alpha_ptr);
 #endif
   }
   return cutlass::Status::kErrorInternal;
@@ -294,7 +299,8 @@ float benchmark_sparse_variant(
     const cutlass::float_ue4m3_t* SFA,
     const cutlass::float_ue4m3_t* SFB,
     float alpha,
-    float beta) {
+    float beta,
+    const float* alpha_ptr) {
   constexpr int kWarmupIters = 2;
   constexpr int kTimingRepeats = 2;
   int iters = sparse_autotune_iterations(M, N, K);
@@ -302,7 +308,7 @@ float benchmark_sparse_variant(
 
   for (int repeat = 0; repeat < kTimingRepeats; ++repeat) {
     for (int i = 0; i < kWarmupIters; ++i) {
-      if (dispatch_sparse_variant(variant, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta) != cutlass::Status::kSuccess) {
+      if (dispatch_sparse_variant(variant, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta, alpha_ptr) != cutlass::Status::kSuccess) {
         return std::numeric_limits<float>::infinity();
       }
     }
@@ -315,7 +321,7 @@ float benchmark_sparse_variant(
 
     SHARQ_CHECK_CUDA(cudaEventRecord(start));
     for (int i = 0; i < iters; ++i) {
-      if (dispatch_sparse_variant(variant, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta) != cutlass::Status::kSuccess) {
+      if (dispatch_sparse_variant(variant, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta, alpha_ptr) != cutlass::Status::kSuccess) {
         SHARQ_CHECK_CUDA(cudaEventDestroy(start));
         SHARQ_CHECK_CUDA(cudaEventDestroy(stop));
         return std::numeric_limits<float>::infinity();
@@ -347,7 +353,8 @@ SparseKernelVariant autotune_sparse_variant(
     const cutlass::float_ue4m3_t* SFA,
     const cutlass::float_ue4m3_t* SFB,
     float alpha,
-    float beta) {
+    float beta,
+    const float* alpha_ptr) {
   SparseKernelVariant best_variant = sparse_heuristic_variant(M, N, K);
   float best_ms = std::numeric_limits<float>::infinity();
 
@@ -359,7 +366,7 @@ SparseKernelVariant autotune_sparse_variant(
   };
 
   for (SparseKernelVariant candidate : kCandidates) {
-    float candidate_ms = benchmark_sparse_variant(candidate, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta);
+    float candidate_ms = benchmark_sparse_variant(candidate, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta, alpha_ptr);
     if (candidate_ms < best_ms) {
       best_ms = candidate_ms;
       best_variant = candidate;
@@ -395,7 +402,8 @@ SparseKernelVariant select_sparse_variant(
     const cutlass::float_ue4m3_t* SFA,
     const cutlass::float_ue4m3_t* SFB,
     float alpha,
-    float beta) {
+    float beta,
+    const float* alpha_ptr) {
   if (auto forced = forced_sparse_variant_from_env()) {
     return *forced;
   }
@@ -414,7 +422,7 @@ SparseKernelVariant select_sparse_variant(
 
   SparseKernelVariant selected = env_flag_enabled("SHARQ_SPARSE_NVFP4_DISABLE_AUTOTUNE")
       ? sparse_heuristic_variant(M, N, K)
-      : autotune_sparse_variant(device, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta);
+      : autotune_sparse_variant(device, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta, alpha_ptr);
 
   {
     std::lock_guard<std::mutex> lock(g_sparse_variant_cache_mutex);
@@ -437,9 +445,10 @@ void matmul_host_sparse_nvfp4_bf16(
     const cutlass::float_ue4m3_t* SFA,
     const cutlass::float_ue4m3_t* SFB,
     float alpha,
-    float beta) {
-  SparseKernelVariant variant = select_sparse_variant(A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta);
-  auto status = dispatch_sparse_variant(variant, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta);
+    float beta,
+    const float* alpha_ptr) {
+  SparseKernelVariant variant = select_sparse_variant(A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta, alpha_ptr);
+  auto status = dispatch_sparse_variant(variant, A, B, E, M, N, K, C, D, SFA, SFB, alpha, beta, alpha_ptr);
   if (status != cutlass::Status::kSuccess) {
     std::cerr << "CUTLASS sparse NVFP4 GEMM failed with status: "
               << cutlass::cutlassGetStatusString(status) << " ("

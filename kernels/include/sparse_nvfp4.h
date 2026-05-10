@@ -162,6 +162,7 @@ void matmul_host_sparse_nvfp4_bf16(
     const cutlass::float_ue4m3_t* SFA,
     const cutlass::float_ue4m3_t* SFB,
     float alpha = 1.0f,
-    float beta = 0.0f);
+    float beta = 0.0f,
+    const float* alpha_ptr = nullptr);
 
 }  // namespace sparse_nvfp4

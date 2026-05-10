@@ -136,7 +136,8 @@ cutlass::Status launch_dense_variant(
     const ElementA::ScaleFactorType* SFA,
     const ElementB::ScaleFactorType* SFB,
     float scale,
-    float beta) {
+    float beta,
+    const float* scale_ptr) {
   using Gemm = typename KernelTraits::Gemm;
   using StrideA = typename KernelTraits::StrideA;
   using LayoutSFA = typename KernelTraits::LayoutSFA;
@@ -165,10 +166,13 @@ cutlass::Status launch_dense_variant(
           SFB, layout_SFB,
       },
       {
-          {scale, beta},
+          {},
           C, stride_C,
           D, stride_D,
       }};
+  arguments.epilogue.thread.alpha = scale;
+  arguments.epilogue.thread.beta = beta;
+  arguments.epilogue.thread.alpha_ptr = scale_ptr;
 
   return gemm_op(arguments);
 }
@@ -185,13 +189,14 @@ cutlass::Status dispatch_dense_variant(
     const ElementA::ScaleFactorType* SFA,
     const ElementB::ScaleFactorType* SFB,
     float scale,
-    float beta) {
+    float beta,
+    const float* scale_ptr) {
   switch (variant) {
     case DenseKernelVariant::kBaselineAuto:
-      return launch_dense_variant<DenseKernelBaseline>(A, B, M, N, K, C, D, SFA, SFB, scale, beta);
+      return launch_dense_variant<DenseKernelBaseline>(A, B, M, N, K, C, D, SFA, SFB, scale, beta, scale_ptr);
 #if defined(SHARQ_TARGET_SM100A)
     case DenseKernelVariant::kSmall1Sm128x128x256:
-      return launch_dense_variant<DenseKernelSmall1Sm>(A, B, M, N, K, C, D, SFA, SFB, scale, beta);
+      return launch_dense_variant<DenseKernelSmall1Sm>(A, B, M, N, K, C, D, SFA, SFB, scale, beta, scale_ptr);
 #endif
   }
   return cutlass::Status::kErrorInternal;
@@ -288,7 +293,8 @@ float benchmark_dense_variant(
     const ElementA::ScaleFactorType* SFA,
     const ElementB::ScaleFactorType* SFB,
     float scale,
-    float beta) {
+    float beta,
+    const float* scale_ptr) {
   constexpr int kWarmupIters = 2;
   constexpr int kTimingRepeats = 2;
   int iters = dense_autotune_iterations(M, N, K);
@@ -296,7 +302,7 @@ float benchmark_dense_variant(
 
   for (int repeat = 0; repeat < kTimingRepeats; ++repeat) {
     for (int i = 0; i < kWarmupIters; ++i) {
-      if (dispatch_dense_variant(variant, A, B, M, N, K, C, D, SFA, SFB, scale, beta) != cutlass::Status::kSuccess) {
+      if (dispatch_dense_variant(variant, A, B, M, N, K, C, D, SFA, SFB, scale, beta, scale_ptr) != cutlass::Status::kSuccess) {
         return std::numeric_limits<float>::infinity();
       }
     }
@@ -309,7 +315,7 @@ float benchmark_dense_variant(
 
     CHECK_CUDA(cudaEventRecord(start));
     for (int i = 0; i < iters; ++i) {
-      if (dispatch_dense_variant(variant, A, B, M, N, K, C, D, SFA, SFB, scale, beta) != cutlass::Status::kSuccess) {
+      if (dispatch_dense_variant(variant, A, B, M, N, K, C, D, SFA, SFB, scale, beta, scale_ptr) != cutlass::Status::kSuccess) {
         CHECK_CUDA(cudaEventDestroy(start));
         CHECK_CUDA(cudaEventDestroy(stop));
         return std::numeric_limits<float>::infinity();
@@ -340,7 +346,8 @@ DenseKernelVariant autotune_dense_variant(
     const ElementA::ScaleFactorType* SFA,
     const ElementB::ScaleFactorType* SFB,
     float scale,
-    float beta) {
+    float beta,
+    const float* scale_ptr) {
   DenseKernelVariant best_variant = dense_heuristic_variant(M, N, K);
   float best_ms = std::numeric_limits<float>::infinity();
 
@@ -352,7 +359,7 @@ DenseKernelVariant autotune_dense_variant(
   };
 
   for (DenseKernelVariant candidate : kCandidates) {
-    float candidate_ms = benchmark_dense_variant(candidate, A, B, M, N, K, C, D, SFA, SFB, scale, beta);
+    float candidate_ms = benchmark_dense_variant(candidate, A, B, M, N, K, C, D, SFA, SFB, scale, beta, scale_ptr);
     if (candidate_ms < best_ms) {
       best_ms = candidate_ms;
       best_variant = candidate;
@@ -387,7 +394,8 @@ DenseKernelVariant select_dense_variant(
     const ElementA::ScaleFactorType* SFA,
     const ElementB::ScaleFactorType* SFB,
     float scale,
-    float beta) {
+    float beta,
+    const float* scale_ptr) {
   if (auto forced = forced_dense_variant_from_env()) {
     return *forced;
   }
@@ -410,7 +418,7 @@ DenseKernelVariant select_dense_variant(
 
   DenseKernelVariant selected = env_flag_enabled("SHARQ_NVFP4_DISABLE_AUTOTUNE")
       ? dense_heuristic_variant(M, N, K)
-      : autotune_dense_variant(device, A, B, M, N, K, C, D, SFA, SFB, scale, beta);
+      : autotune_dense_variant(device, A, B, M, N, K, C, D, SFA, SFB, scale, beta, scale_ptr);
 
   {
     std::lock_guard<std::mutex> lock(g_dense_variant_cache_mutex);
@@ -432,9 +440,10 @@ void matmul_host_nvfp4_bf16(
     const ElementA::ScaleFactorType* SFA,
     const ElementB::ScaleFactorType* SFB,
     float scale,
-    float beta) {
-  DenseKernelVariant variant = select_dense_variant(A, B, M, N, K, C, D, SFA, SFB, scale, beta);
-  cutlass::Status status = dispatch_dense_variant(variant, A, B, M, N, K, C, D, SFA, SFB, scale, beta);
+    float beta,
+    const float* scale_ptr) {
+  DenseKernelVariant variant = select_dense_variant(A, B, M, N, K, C, D, SFA, SFB, scale, beta, scale_ptr);
+  cutlass::Status status = dispatch_dense_variant(variant, A, B, M, N, K, C, D, SFA, SFB, scale, beta, scale_ptr);
   if (status != cutlass::Status::kSuccess) {
     std::cerr << "CUTLASS GEMM operation in matmul_host_nvfp4_bf16 failed with status: "
               << cutlass::cutlassGetStatusString(status)
