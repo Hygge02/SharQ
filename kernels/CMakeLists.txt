@@ -6,7 +6,7 @@ set(KERNELS_SRC_DIR ${KERNELS_DIR}/src)
 set(KERNELS_INCLUDE_DIR ${KERNELS_DIR}/include)
 set(KERNELS_BENCH_DIR ${KERNELS_DIR}/benchmark)
 
-set(SHARQ_CUDA_ARCH "sm100a" CACHE STRING "Target Blackwell architecture for SharQ CUDA kernels")
+set(SHARQ_CUDA_ARCH "sm120a" CACHE STRING "Target Blackwell architecture for SharQ CUDA kernels")
 set_property(CACHE SHARQ_CUDA_ARCH PROPERTY STRINGS sm100a sm120a)
 
 if(SHARQ_CUDA_ARCH STREQUAL "sm100a")
@@ -141,5 +141,4 @@ apply_sharq_cuda_arch(sharq_ops)
 set_property(TARGET sharq_ops PROPERTY CXX_STANDARD 17)
 set_target_properties(sharq_ops PROPERTIES PREFIX "")
 add_definitions(-DTORCH_EXTENSION_NAME=sharq_ops)
-
 

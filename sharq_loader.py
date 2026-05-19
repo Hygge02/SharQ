@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_DEFAULT_BUILD_DIRS = ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+_DEFAULT_BUILD_DIRS = ("build_cmake_sm120a", "build_cmake_sm100a", "build")
 _ARCH_BUILD_DIRS = {
     10: "build_cmake_sm100a",
     12: "build_cmake_sm120a",

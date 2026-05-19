@@ -19,14 +19,14 @@ _THIS_DIR = Path(__file__).resolve().parent
 
 def _ordered_build_dir_names() -> tuple[str, ...]:
     if not torch.cuda.is_available():
-        return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+        return ("build_cmake_sm120a", "build_cmake_sm100a", "build")
 
     major, _minor = torch.cuda.get_device_capability()
     if major >= 12:
         return ("build_cmake_sm120a", "build_cmake_sm100a", "build")
     if major >= 10:
         return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
-    return ("build_cmake_sm100a", "build_cmake_sm120a", "build")
+    return ("build_cmake_sm120a", "build_cmake_sm100a", "build")
 
 
 def _kernel_build_candidates() -> list[Path]:
@@ -424,7 +424,6 @@ class SHARQLinearMethod(LinearMethodBase):
         if bias is not None:
             out.add_(bias)
         return out.view(*x.shape[:-1], -1)
-
 
 
 

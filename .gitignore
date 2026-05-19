@@ -27,16 +27,31 @@ __pycache__/
 
 # Local outputs
 /saved/
+/paper/
+/profile/
 /profiles/
 /results/
 /output/
+wandb/
+*.ncu-rep
+*.nsys-rep
 *.log
 log.txt
 *.tar.gz
 *.pt
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex.gz
+*.toc
 
 # Editor files
 .vscode/
 **/.vscode/
+.DS_Store
+Thumbs.db
 
 benchmarks/perf/results/
