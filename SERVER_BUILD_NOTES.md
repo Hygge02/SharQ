@@ -14,6 +14,7 @@ conda install pybind11 -y
 cmake -S kernels -B kernels/build_cmake_sm120a \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DSHARQ_CUDA_ARCH=sm120a \
   -DPython3_EXECUTABLE=$(which python)
 
 cmake --build kernels/build_cmake_sm120a --target sharq_ops -j
@@ -45,6 +46,6 @@ python model/main.py /path/to/model \
 
 ## Notes
 
-- Python-side loaders prefer the repo-local `kernels/build_cmake_sm120a/sharq_ops.so`.
+- Python-side loaders prefer the native build for the detected GPU. When no CUDA device is visible, they try `build_cmake_sm120a`, then `build_cmake_sm100a`, then `build`.
 - `SHARQ` is the fused sparse-residual kernel path used by this repo.
 - `SHARQ_SIM` is the pure PyTorch simulation path and can be used as an accuracy-only reference without building the CUDA extension.

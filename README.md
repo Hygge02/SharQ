@@ -4,6 +4,8 @@
 
 SharQ is a Blackwell-oriented LLM quantization repo built around this idea: use a sparse FP4 main path to capture important activations, then use a dense FP4 residual path to recover the loss from sparsification and quantization.
 
+![SharQ method overview](assets/readme/sharq_method_overview.png)
+
 The repo currently provides three practical modes:
 
 - `NVFP4`: dense FP4 baseline
@@ -50,7 +52,7 @@ For kernel structure, build details, and low-level CUDA benchmarks, see [`kernel
 - Python `3.10`
 - PyTorch with CUDA support
 - CUDA `12.8` recommended
-- Blackwell `sm_120a` GPU for the real `SHARQ` kernel path
+- NVIDIA RTX 50 / Blackwell `sm_120a` GPU for the default real `SHARQ` kernel path
 
 Install dependencies:
 
@@ -67,9 +69,16 @@ Build the CUDA extension:
 cmake -S kernels -B kernels/build_cmake_sm120a \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DSHARQ_CUDA_ARCH=sm120a \
   -DPython3_EXECUTABLE=$(which python)
 
 cmake --build kernels/build_cmake_sm120a --target sharq_ops -j
+```
+
+If you are targeting B200 instead of RTX 50 series, switch the architecture explicitly:
+
+```bash
+cmake -S kernels -B kernels/build_cmake_sm100a -DSHARQ_CUDA_ARCH=sm100a
 ```
 
 If you only want a numerical reference path, `SHARQ_SIM` does not require the CUDA extension.

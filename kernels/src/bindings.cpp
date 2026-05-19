@@ -59,6 +59,18 @@ inline size_t get_sfb_buffer_size_in_bytes(int num_rows, int k_dim) {
   return (num_rows / 128 + 1) * 128 * k_dim / 16;
 }
 
+const float *checked_float_scale_ptr(
+    const torch::Tensor &scale,
+    const torch::Tensor &reference,
+    const char *name) {
+  TORCH_CHECK(scale.is_cuda(), name, " must be a CUDA tensor");
+  TORCH_CHECK(scale.is_contiguous(), name, " must be contiguous");
+  TORCH_CHECK(scale.scalar_type() == at::ScalarType::Float, name, " must be torch.float32");
+  TORCH_CHECK(scale.numel() == 1, name, " must contain exactly one element");
+  TORCH_CHECK(scale.device() == reference.device(), name, " must be on the same device as the inputs");
+  return scale.data_ptr<float>();
+}
+
 std::tuple<torch::Tensor, torch::Tensor> reorder_quantize_x(
     const torch::Tensor &X,
     const torch::Tensor &reorder_index,
@@ -323,13 +335,12 @@ fused_rmsnorm_sparse_residual_quantize_x(
       row_absmax.data_ptr<float>());
 
   auto scale = torch::clamp(torch::amax(row_absmax) / (448.0f * 6.0f), 1.0e-9f);
-  float input_scale = scale.item<float>();
 
   run_fused_rmsnorm_sparse_residual_x_bf16_nvfp4(
       reinterpret_cast<cutlass::bfloat16_t *>(X.data_ptr<at::BFloat16>()),
       reinterpret_cast<cutlass::bfloat16_t *>(rmsnorm_weight.data_ptr<at::BFloat16>()),
       inv_rms.data_ptr<float>(),
-      input_scale,
+      scale.data_ptr<float>(),
       M,
       N,
       K,
@@ -453,6 +464,34 @@ torch::Tensor matmul(
   return C;
 }
 
+torch::Tensor matmul_tensor_scale(
+    const torch::Tensor &A,
+    const torch::Tensor &B,
+    const torch::Tensor &SFA,
+    const torch::Tensor &SFB,
+    const torch::Tensor &scale) {
+  const float *scale_ptr = checked_float_scale_ptr(scale, A, "scale");
+  uint32_t M = static_cast<uint32_t>(A.size(0));
+  uint32_t N = static_cast<uint32_t>(B.size(0));
+  uint32_t K = static_cast<uint32_t>(A.size(1) * 2);
+  auto C = torch::empty({M, N}, torch::dtype(torch::kBFloat16).device(A.device()));
+
+  matmul_host_nvfp4_bf16(
+      reinterpret_cast<cutlass::float_e2m1_t *>(A.data_ptr<uint8_t>()),
+      reinterpret_cast<cutlass::float_e2m1_t *>(B.data_ptr<uint8_t>()),
+      M,
+      N,
+      K,
+      reinterpret_cast<cutlass::bfloat16_t *>(C.data_ptr<at::BFloat16>()),
+      reinterpret_cast<cutlass::bfloat16_t *>(C.data_ptr<at::BFloat16>()),
+      reinterpret_cast<cutlass::float_ue4m3_t *>(SFA.data_ptr<uint8_t>()),
+      reinterpret_cast<cutlass::float_ue4m3_t *>(SFB.data_ptr<uint8_t>()),
+      1.0f,
+      0.0f,
+      scale_ptr);
+  return C;
+}
+
 torch::Tensor matmul_accum(
     const torch::Tensor &A,
     const torch::Tensor &B,
@@ -487,6 +526,45 @@ torch::Tensor matmul_accum(
       reinterpret_cast<cutlass::float_ue4m3_t *>(SFB.data_ptr<uint8_t>()),
       scale,
       beta);
+  return D;
+}
+
+torch::Tensor matmul_accum_tensor_scale(
+    const torch::Tensor &A,
+    const torch::Tensor &B,
+    const torch::Tensor &SFA,
+    const torch::Tensor &SFB,
+    const torch::Tensor &scale,
+    const torch::Tensor &C_in,
+    const float beta) {
+  const float *scale_ptr = checked_float_scale_ptr(scale, A, "scale");
+  TORCH_CHECK(C_in.is_cuda(), "C_in must be a CUDA tensor");
+  TORCH_CHECK(C_in.is_contiguous(), "C_in must be contiguous");
+  TORCH_CHECK(C_in.scalar_type() == at::ScalarType::BFloat16, "C_in must be torch.bfloat16");
+
+  uint32_t M = static_cast<uint32_t>(A.size(0));
+  uint32_t N = static_cast<uint32_t>(B.size(0));
+  uint32_t K = static_cast<uint32_t>(A.size(1) * 2);
+  TORCH_CHECK(C_in.dim() == 2, "C_in must be shaped [M, N]");
+  TORCH_CHECK(C_in.size(0) == M && C_in.size(1) == N,
+              "C_in shape mismatch: expected [", M, ", ", N, "] got [", C_in.size(0), ", ", C_in.size(1), "]");
+  TORCH_CHECK(C_in.device() == A.device(), "C_in must be on the same device as A");
+
+  auto D = torch::empty({M, N}, torch::dtype(torch::kBFloat16).device(A.device()));
+
+  matmul_host_nvfp4_bf16(
+      reinterpret_cast<cutlass::float_e2m1_t *>(A.data_ptr<uint8_t>()),
+      reinterpret_cast<cutlass::float_e2m1_t *>(B.data_ptr<uint8_t>()),
+      M,
+      N,
+      K,
+      reinterpret_cast<cutlass::bfloat16_t *>(const_cast<at::BFloat16 *>(C_in.data_ptr<at::BFloat16>())),
+      reinterpret_cast<cutlass::bfloat16_t *>(D.data_ptr<at::BFloat16>()),
+      reinterpret_cast<cutlass::float_ue4m3_t *>(SFA.data_ptr<uint8_t>()),
+      reinterpret_cast<cutlass::float_ue4m3_t *>(SFB.data_ptr<uint8_t>()),
+      1.0f,
+      beta,
+      scale_ptr);
   return D;
 }
 
@@ -536,7 +614,7 @@ torch::Tensor sparse_matmul(
   TORCH_CHECK(B.size(1) == expected_b_cols,
               "B.size(1) mismatch: expected ", expected_b_cols, ", got ", B.size(1));
 
-  auto C = torch::zeros({M, N}, torch::dtype(torch::kBFloat16).device(A_comp.device()));
+  auto C = torch::empty({M, N}, torch::dtype(torch::kBFloat16).device(A_comp.device()));
 
   sparse_nvfp4::matmul_host_sparse_nvfp4_bf16(
       reinterpret_cast<cutlass::float_e2m1_t *>(A_comp.data_ptr<uint8_t>()),
@@ -555,6 +633,73 @@ torch::Tensor sparse_matmul(
   return C;
 }
 
+torch::Tensor sparse_matmul_tensor_scale(
+    const torch::Tensor &A_comp,
+    const torch::Tensor &B,
+    const torch::Tensor &E,
+    const torch::Tensor &SFA,
+    const torch::Tensor &SFB,
+    const int M,
+    const int N,
+    const int K,
+    const torch::Tensor &alpha,
+    const float beta) {
+  const float *alpha_ptr = checked_float_scale_ptr(alpha, A_comp, "alpha");
+  TORCH_CHECK(M > 0 && N > 0 && K > 0, "M, N, K must be positive");
+  TORCH_CHECK(beta == 0.0f, "sparse_matmul_tensor_scale currently requires beta == 0");
+  TORCH_CHECK(A_comp.is_cuda() && B.is_cuda() && E.is_cuda() && SFA.is_cuda() && SFB.is_cuda(),
+              "sparse_matmul_tensor_scale inputs must be CUDA tensors");
+  TORCH_CHECK(A_comp.is_contiguous() && B.is_contiguous() && E.is_contiguous() &&
+                  SFA.is_contiguous() && SFB.is_contiguous(),
+              "sparse_matmul_tensor_scale inputs must be contiguous");
+  TORCH_CHECK(A_comp.scalar_type() == at::ScalarType::Byte, "A_comp must be torch.uint8");
+  TORCH_CHECK(B.scalar_type() == at::ScalarType::Byte, "B must be torch.uint8");
+  TORCH_CHECK(E.scalar_type() == at::ScalarType::Byte, "E must be torch.uint8");
+  TORCH_CHECK(SFA.scalar_type() == at::ScalarType::Byte, "SFA must be torch.uint8");
+  TORCH_CHECK(SFB.scalar_type() == at::ScalarType::Byte, "SFB must be torch.uint8");
+  TORCH_CHECK(A_comp.device() == B.device() && A_comp.device() == E.device() &&
+                  A_comp.device() == SFA.device() && A_comp.device() == SFB.device(),
+              "sparse_matmul_tensor_scale inputs must be on the same device");
+
+  auto expected_a_bytes = static_cast<int64_t>(sparse_nvfp4::get_compressed_a_bytes(M, N, K));
+  auto expected_e_bytes = static_cast<int64_t>(sparse_nvfp4::get_metadata_e_bytes(M, N, K));
+  auto expected_sfa_bytes = static_cast<int64_t>(sparse_nvfp4::get_sfa_bytes(M, N, K));
+  auto expected_sfb_bytes = static_cast<int64_t>(sparse_nvfp4::get_sfb_bytes(M, N, K));
+  auto expected_b_cols = K / 2;
+
+  TORCH_CHECK(A_comp.numel() == expected_a_bytes,
+              "A_comp.numel() mismatch: expected ", expected_a_bytes, ", got ", A_comp.numel());
+  TORCH_CHECK(E.numel() == expected_e_bytes,
+              "E.numel() mismatch: expected ", expected_e_bytes, ", got ", E.numel());
+  TORCH_CHECK(SFA.numel() == expected_sfa_bytes,
+              "SFA.numel() mismatch: expected ", expected_sfa_bytes, ", got ", SFA.numel());
+  TORCH_CHECK(SFB.numel() == expected_sfb_bytes,
+              "SFB.numel() mismatch: expected ", expected_sfb_bytes, ", got ", SFB.numel());
+  TORCH_CHECK(B.dim() == 2, "B must be a 2D tensor shaped [N, K/2]");
+  TORCH_CHECK(B.size(0) == N, "B.size(0) mismatch: expected ", N, ", got ", B.size(0));
+  TORCH_CHECK(B.size(1) == expected_b_cols,
+              "B.size(1) mismatch: expected ", expected_b_cols, ", got ", B.size(1));
+
+  auto C = torch::empty({M, N}, torch::dtype(torch::kBFloat16).device(A_comp.device()));
+
+  sparse_nvfp4::matmul_host_sparse_nvfp4_bf16(
+      reinterpret_cast<cutlass::float_e2m1_t *>(A_comp.data_ptr<uint8_t>()),
+      reinterpret_cast<cutlass::float_e2m1_t *>(B.data_ptr<uint8_t>()),
+      E.data_ptr<uint8_t>(),
+      M,
+      N,
+      K,
+      reinterpret_cast<cutlass::bfloat16_t *>(C.data_ptr<at::BFloat16>()),
+      reinterpret_cast<cutlass::bfloat16_t *>(C.data_ptr<at::BFloat16>()),
+      reinterpret_cast<cutlass::float_ue4m3_t *>(SFA.data_ptr<uint8_t>()),
+      reinterpret_cast<cutlass::float_ue4m3_t *>(SFB.data_ptr<uint8_t>()),
+      1.0f,
+      beta,
+      alpha_ptr);
+
+  return C;
+}
+
 /**************************** Python Bindings ****************************/
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -564,11 +709,21 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("matmul_accum", &matmul_accum,
         "Dense NVFP4 GEMM with epilogue accumulation into an existing bf16 tensor",
         py::arg("A"), py::arg("B"), py::arg("SFA"), py::arg("SFB"), py::arg("scale"), py::arg("C_in"), py::arg("beta") = 1.0f);
+  m.def("matmul_tensor_scale", &matmul_tensor_scale,
+        "Dense NVFP4 GEMM with a CUDA float32 scalar scale tensor",
+        py::arg("A"), py::arg("B"), py::arg("SFA"), py::arg("SFB"), py::arg("scale"));
+  m.def("matmul_accum_tensor_scale", &matmul_accum_tensor_scale,
+        "Dense NVFP4 GEMM accumulation with a CUDA float32 scalar scale tensor",
+        py::arg("A"), py::arg("B"), py::arg("SFA"), py::arg("SFB"), py::arg("scale"), py::arg("C_in"), py::arg("beta") = 1.0f);
 
   m.def("sparse_matmul", &sparse_matmul,
         "Sparse NVFP4 GEMM for precompressed A_comp/E/SFA inputs",
         py::arg("A_comp"), py::arg("B"), py::arg("E"), py::arg("SFA"), py::arg("SFB"),
         py::arg("M"), py::arg("N"), py::arg("K"), py::arg("alpha") = 1.0f, py::arg("beta") = 0.0f);
+  m.def("sparse_matmul_tensor_scale", &sparse_matmul_tensor_scale,
+        "Sparse NVFP4 GEMM for precompressed A_comp/E/SFA inputs with a CUDA float32 scalar alpha tensor",
+        py::arg("A_comp"), py::arg("B"), py::arg("E"), py::arg("SFA"), py::arg("SFB"),
+        py::arg("M"), py::arg("N"), py::arg("K"), py::arg("alpha"), py::arg("beta") = 0.0f);
 
   m.def("quantize_x_nvfp4", &quantize_x_nvfp4,
         "Quantize activation into dense NVFP4 without reordering",
@@ -616,4 +771,3 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #undef CASE_REORDER_W_16
 #undef CASE_REORDER_W_32
 #undef CASE_DOWN_W_32
-

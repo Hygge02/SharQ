@@ -8,11 +8,12 @@ import torch
 
 def load_sharq_ops():
     repo_root = Path(__file__).resolve().parents[2]
-    build_dir = repo_root / "kernels" / "build_cmake_sm120a"
-    sys.path.insert(0, str(build_dir))
-    import sharq_ops as backend  # type: ignore
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+    from sharq_loader import load_sharq_ops as _load_sharq_ops
 
-    return backend
+    return _load_sharq_ops(repo_root=repo_root)
 
 
 def make_fixed_top2_4_ones(m: int, k: int, device: torch.device) -> torch.Tensor:

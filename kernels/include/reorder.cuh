@@ -34,6 +34,7 @@
 #include "cutlass/util/reference/host/tensor_compare.h"
 
 #include "helper.h"
+#include "sharq_blackwell_arch.h"
 
 typedef cutlass::float_e2m1_t fp4_t;
 typedef cutlass::float_ue4m3_t sf_t;
@@ -65,12 +66,12 @@ namespace nvfp4{
   constexpr int AlignmentC  = 128 / cutlass::sizeof_bits<ElementC>::value;    // Memory access granularity/alignment of C matrix in units of elements (up to 16 bytes)
   // Kernel functional config
   using ElementAccumulator  = float;                                          // Element type for internal accumulation
-  using ArchTag             = cutlass::arch::Sm120;                           // Tag indicating the minimum SM that supports the intended feature
+  using ArchTag             = sharq::blackwell_arch::DenseArchTag;            // Tag indicating the minimum SM that supports the intended feature
   using OperatorClass       = cutlass::arch::OpClassBlockScaledTensorOp;      // Operator class tag
 
   // Kernel Perf config
-  using ThreadBlockShape    = Shape<_128,_128,_128>;                          // Threadblock's tile size
-  using ClusterShape        = Shape<_1,_1,_1>;                                // Shape of the threadblocks in a cluster
+  using ThreadBlockShape    = sharq::blackwell_arch::DenseTileShape;          // Threadblock's tile size
+  using ClusterShape        = sharq::blackwell_arch::DenseClusterShape;       // Shape of the threadblocks in a cluster
   
   using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilder<
       ArchTag, OperatorClass,

@@ -31,17 +31,13 @@ def load_sharq_ops():
     if _SHARQ_OPS is not None:
         return _SHARQ_OPS
 
-    for build_dir in (_REPO_ROOT / "kernels" / "build_cmake_sm120a", _REPO_ROOT / "kernels" / "build"):
-        build_dir_str = str(build_dir)
-        if build_dir_str not in sys.path:
-            sys.path.append(build_dir_str)
-        try:
-            _SHARQ_OPS = __import__("sharq_ops")
-            return _SHARQ_OPS
-        except ImportError:
-            continue
+    repo_root_str = str(_REPO_ROOT)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+    from sharq_loader import load_sharq_ops as _load_sharq_ops
 
-    raise ImportError("Failed to import sharq_ops from kernels/build_cmake_sm120a or kernels/build")
+    _SHARQ_OPS = _load_sharq_ops(repo_root=_REPO_ROOT)
+    return _SHARQ_OPS
 
 
 def global_nvfp4_scale(x: torch.Tensor) -> torch.Tensor:

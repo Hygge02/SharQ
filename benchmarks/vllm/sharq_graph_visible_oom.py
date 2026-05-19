@@ -1,4 +1,10 @@
 # vLLM/vllm/model_executor/layers/quantization/sharq.py
+#
+# Graph-visible SHARQ variant for large-memory CUDA graph experiments.
+# This keeps the SHARQ prepare/GEMM/accum steps as separate graph-visible
+# custom ops. It can reduce repeated prepare work when the vLLM model already
+# uses merged projections, but it is expected to consume much more CUDA graph
+# capture memory than the opaque sharq_linear_forward_v1 path.
 
 import os
 from pathlib import Path
@@ -388,19 +394,36 @@ class SHARQLinearMethod(LinearMethodBase):
 
     def apply(self, layer, x, bias=None):
         x_2d = x.view(-1, x.shape[-1]).contiguous()
-        weight_scale = layer.scale_b_value
-        out = torch.ops.vllm.sharq_linear_forward_v1(
+        a_comp, e, sfa_sparse, q_res, sf_res, scale_a = torch.ops.vllm.sharq_fused_sparse_residual_quantize_x_v2(
             x_2d,
+            layer.output_size,
+        )
+        weight_scale = layer.scale_b_value
+        y_sparse = torch.ops.vllm.sharq_sparse_matmul_v2(
+            a_comp,
             layer.QW,
+            e,
+            sfa_sparse,
             layer.SFW_sparse,
-            layer.SFW_dense,
+            x_2d.shape[0],
+            layer.output_size,
+            layer.input_size,
             weight_scale,
         )
+        out = torch.ops.vllm.sharq_matmul_accum_v2(
+            q_res,
+            layer.QW,
+            sf_res,
+            layer.SFW_dense,
+            weight_scale,
+            y_sparse,
+            1.0,
+        )
+        out = out * scale_a.to(out.dtype)
 
         if bias is not None:
             out.add_(bias)
         return out.view(*x.shape[:-1], -1)
-
 
 
 

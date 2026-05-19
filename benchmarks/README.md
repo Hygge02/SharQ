@@ -2,6 +2,8 @@
 
 The benchmark directory is grouped by purpose.
 
+![SharQ end-to-end serving efficiency](../assets/readme/vllm_efficiency.png)
+
 ## correctness/
 
 Low-level correctness and consistency checks for SharQ kernels and model-side paths.
@@ -26,6 +28,8 @@ Latency and throughput measurements.
 End-to-end model benchmarks.
 
 - `benchmark_prefill_e2e.py`
+
+![SharQ prefill breakdown and GEMM speedup](../assets/readme/prefill_breakdown_with_speedup.png)
 
 ## ablation/
 

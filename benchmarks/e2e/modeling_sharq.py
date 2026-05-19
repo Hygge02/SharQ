@@ -58,7 +58,7 @@ def load_benchmark_model(
             **load_kwargs,
         )
         model = model.to(device=device, dtype=torch.float16)
-    elif mode == "SHARQ":
+    elif mode in {"NVFP4", "SHARQ"}:
         model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
             torch_dtype="auto",
@@ -69,7 +69,7 @@ def load_benchmark_model(
             model,
             device=device,
             kv_cache=kv_cache,
-            quant_type="SHARQ",
+            quant_type=mode,
             extra_fusion=extra_fusion,
         )
         model = model.to(device=device)

@@ -6,6 +6,21 @@ set(KERNELS_SRC_DIR ${KERNELS_DIR}/src)
 set(KERNELS_INCLUDE_DIR ${KERNELS_DIR}/include)
 set(KERNELS_BENCH_DIR ${KERNELS_DIR}/benchmark)
 
+set(SHARQ_CUDA_ARCH "sm120a" CACHE STRING "Target Blackwell architecture for SharQ CUDA kernels")
+set_property(CACHE SHARQ_CUDA_ARCH PROPERTY STRINGS sm100a sm120a)
+
+if(SHARQ_CUDA_ARCH STREQUAL "sm100a")
+  set(SHARQ_TORCH_CUDA_ARCH_DEFAULT "10.0a")
+  set(SHARQ_NVCC_GENERATE_CODE "arch=compute_100a,code=sm_100a")
+  set(SHARQ_ARCH_DEFINE "SHARQ_TARGET_SM100A")
+elseif(SHARQ_CUDA_ARCH STREQUAL "sm120a")
+  set(SHARQ_TORCH_CUDA_ARCH_DEFAULT "12.0a")
+  set(SHARQ_NVCC_GENERATE_CODE "arch=compute_120a,code=sm_120a")
+  set(SHARQ_ARCH_DEFINE "SHARQ_TARGET_SM120A")
+else()
+  message(FATAL_ERROR "Unsupported SHARQ_CUDA_ARCH=${SHARQ_CUDA_ARCH}. Expected sm100a or sm120a.")
+endif()
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 
 execute_process(
@@ -39,11 +54,12 @@ if(NOT DEFINED TORCH_CUDA_ARCH_LIST)
   if(DEFINED ENV{TORCH_CUDA_ARCH_LIST})
     set(TORCH_CUDA_ARCH_LIST "$ENV{TORCH_CUDA_ARCH_LIST}")
   else()
-    set(TORCH_CUDA_ARCH_LIST "12.0a")
+    set(TORCH_CUDA_ARCH_LIST "${SHARQ_TORCH_CUDA_ARCH_DEFAULT}")
     set(ENV{TORCH_CUDA_ARCH_LIST} "${TORCH_CUDA_ARCH_LIST}")
   endif()
 endif()
 message(STATUS "Using TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}")
+message(STATUS "Configuring SharQ Blackwell kernels for ${SHARQ_CUDA_ARCH}")
 
 unset(CMAKE_CUDA_ARCHITECTURES)
 unset(CMAKE_CUDA_ARCHITECTURES CACHE)
@@ -51,6 +67,9 @@ unset(CMAKE_CUDA_ARCHITECTURES CACHE)
 find_package(Torch REQUIRED)
 
 find_package(CUDAToolkit REQUIRED)
+if(CUDAToolkit_VERSION VERSION_LESS 12.8)
+  message(FATAL_ERROR "SharQ Blackwell kernels require CUDA 12.8 or newer. Found ${CUDAToolkit_VERSION}.")
+endif()
 include_directories(${Python3_INCLUDE_DIRS})
 find_package(pybind11 CONFIG REQUIRED)
 find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_PACKAGE_DIR}/lib" NO_DEFAULT_PATH)
@@ -69,14 +88,11 @@ include_directories(${CUTLASS_ROOT}/examples/common)
 add_compile_options(-w)
 add_compile_options(-fpermissive)
 
-function(enable_cuda_sm120a target_name)
+function(apply_sharq_cuda_arch target_name)
   set_property(TARGET ${target_name} PROPERTY CUDA_ARCHITECTURES OFF)
   target_compile_options(${target_name} PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:--generate-code=arch=compute_120a,code=sm_120a>)
-endfunction()
-
-function(use_torch_cuda_arch_flags target_name)
-  set_property(TARGET ${target_name} PROPERTY CUDA_ARCHITECTURES OFF)
+    $<$<COMPILE_LANGUAGE:CUDA>:--generate-code=${SHARQ_NVCC_GENERATE_CODE}>)
+  target_compile_definitions(${target_name} PRIVATE ${SHARQ_ARCH_DEFINE})
 endfunction()
 
 add_library(gemm_dense_objs OBJECT
@@ -115,21 +131,14 @@ target_compile_options(gemm_dense_objs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcomp
 target_compile_options(gemm_sparse_objs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fPIC>)
 target_compile_options(sharq_ops PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 
-use_torch_cuda_arch_flags(gemm_dense_objs)
-use_torch_cuda_arch_flags(bench_nvfp4)
-use_torch_cuda_arch_flags(sharq_ops)
-enable_cuda_sm120a(gemm_sparse_objs)
-enable_cuda_sm120a(bench_sparse_nvfp4)
-enable_cuda_sm120a(bench_sharq_linear)
-
-target_compile_definitions(bench_nvfp4 PRIVATE CUTLASS_ARCH_SM120_SUPPORTED)
-target_compile_definitions(bench_sparse_nvfp4 PRIVATE CUTLASS_ARCH_SM120_SUPPORTED)
-target_compile_definitions(bench_sharq_linear PRIVATE CUTLASS_ARCH_SM120_SUPPORTED)
-target_compile_definitions(sharq_ops PRIVATE CUTLASS_ARCH_SM120_SUPPORTED)
+apply_sharq_cuda_arch(gemm_dense_objs)
+apply_sharq_cuda_arch(gemm_sparse_objs)
+apply_sharq_cuda_arch(bench_nvfp4)
+apply_sharq_cuda_arch(bench_sparse_nvfp4)
+apply_sharq_cuda_arch(bench_sharq_linear)
+apply_sharq_cuda_arch(sharq_ops)
 
 set_property(TARGET sharq_ops PROPERTY CXX_STANDARD 17)
 set_target_properties(sharq_ops PROPERTIES PREFIX "")
 add_definitions(-DTORCH_EXTENSION_NAME=sharq_ops)
-
-
 

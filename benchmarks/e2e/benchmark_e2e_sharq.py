@@ -329,8 +329,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--modes",
         nargs="+",
-        default=["SHARQ", "FP16"],
-        choices=["SHARQ", "FP16"],
+        default=["NVFP4", "SHARQ", "FP16"],
+        choices=["NVFP4", "SHARQ", "FP16"],
         help="Benchmark modes to run.",
     )
     parser.add_argument("--warmup_steps", type=int, default=DEFAULT_WARMUP_STEPS)

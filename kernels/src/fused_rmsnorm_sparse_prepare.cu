@@ -153,7 +153,7 @@ __global__ void fused_rmsnorm_sparse_residual_x_kernel(
     const bf16_t *input,
     const bf16_t *rmsnorm_weight,
     const float *inv_rms_ptr,
-    float input_scale,
+    const float *input_scale,
     uint8_t *a_comp,
     uint8_t *e,
     uint8_t *q_sparse_dense,
@@ -192,7 +192,7 @@ __global__ void fused_rmsnorm_sparse_residual_x_kernel(
   int selected_pair_idx1[kSparseElementsPerThread / 8];
 
   float inv_rms = inv_rms_ptr[row_id];
-  float input_scale_clamped = fp_max(input_scale, 1.0e-9f);
+  float input_scale_clamped = fp_max(*input_scale, 1.0e-9f);
 
   #pragma unroll
   for (int i = 0; i < kSparseElementsPerThread; ++i) {
@@ -351,7 +351,7 @@ void run_fused_rmsnorm_sparse_residual_x_bf16_nvfp4(
     bf16_t *hidden_states,
     bf16_t *rmsnorm_weight,
     float *inv_rms,
-    float input_scale,
+    const float *input_scale,
     int seq_len,
     int out_features,
     int hidden_dim,
