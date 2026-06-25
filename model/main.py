@@ -60,9 +60,10 @@ def build_parser():
         "--quant_type",
         type=str,
         default="SHARQ",
-        choices=["NVFP4", "SHARQ", "SHARQ_SIM", "HIF4_SIM", "SHARQ_HIF4_SIM"],
+        choices=["NVFP4", "SHARQ", "SHARQ_TILELANG", "SHARQ_SIM", "HIF4_SIM", "SHARQ_HIF4_SIM"],
         help=(
             "Quantization path to evaluate. SHARQ is the fused sparse-residual FP4 method; "
+            "SHARQ_TILELANG runs an equivalent TileLang sparse-residual implementation; "
             "SHARQ_SIM runs a pure PyTorch fake-quantized fake-sparse NVFP4 simulation; "
             "HIF4_SIM and SHARQ_HIF4_SIM are pure PyTorch HIF4 simulation paths."
         ),

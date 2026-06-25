@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import tilelang_backend
 from quantize import (
     apply_rmsnorm,
     load_sharq_ops,
@@ -30,7 +31,7 @@ class QLinearLayer(nn.Module):
     ):
         super().__init__()
 
-        if quant_type not in {"NVFP4", "SHARQ", "SHARQ_SIM", "HIF4_SIM", "SHARQ_HIF4_SIM"}:
+        if quant_type not in {"NVFP4", "SHARQ", "SHARQ_TILELANG", "SHARQ_SIM", "HIF4_SIM", "SHARQ_HIF4_SIM"}:
             raise ValueError(f"Unsupported quant_type: {quant_type}")
 
         self.in_features = original_layer.in_features
@@ -53,7 +54,9 @@ class QLinearLayer(nn.Module):
             return
 
         weight_gpu = original_layer.weight.detach().to(device="cuda", dtype=torch.bfloat16)
-        if self.quant_type == "SHARQ":
+        if self.quant_type == "SHARQ_TILELANG":
+            self.weight_q, self.weight_sf, self.weight_scale = tilelang_backend.quantize_weight_shared_nvfp4(weight_gpu)
+        elif self.quant_type == "SHARQ":
             self.weight_q, self.scale_w_sparse, self.scale_w_dense, self.weight_scale = quantize_weight_shared_nvfp4(weight_gpu)
         else:
             self.weight_q, self.scale_w, self.weight_scale = quantize_weight_nvfp4(weight_gpu)
@@ -76,6 +79,10 @@ class QLinearLayer(nn.Module):
         if self.quant_type == "HIF4_SIM":
             x_q64 = quantize_activation_hif4_sim(x_2d)
             return ("HIF4_SIM", x_q64)
+
+        if self.quant_type == "SHARQ_TILELANG":
+            x_sparse_q, x_sparse_sf, x_res_q, x_res_sf, scale_x = tilelang_backend.quantize_activation_sparse_residual_nvfp4(x_2d)
+            return ("SHARQ_TILELANG", x_sparse_q, x_sparse_sf, x_res_q, x_res_sf, scale_x)
 
         if self.quant_type == "SHARQ":
             sparse_out_features = self.out_features if out_features_hint is None else int(out_features_hint)
@@ -106,6 +113,10 @@ class QLinearLayer(nn.Module):
             )
             return ("SHARQ", a_comp, e, sfa_sparse, qx_res, scale_x_res, scale_x)
 
+        if self.quant_type == "SHARQ_TILELANG":
+            x_norm = apply_rmsnorm(x_2d.to(torch.bfloat16), rmsnorm_weight, rmsnorm_eps)
+            return self.prepare_input(x_norm, out_features_hint=out_features_hint)
+
         x_norm = apply_rmsnorm(x_2d.to(torch.bfloat16), rmsnorm_weight, rmsnorm_eps)
         return self.prepare_input(x_norm, out_features_hint=out_features_hint)
 
@@ -127,6 +138,18 @@ class QLinearLayer(nn.Module):
         elif tag == "HIF4_SIM":
             _, x_q64 = prepared
             y = F.linear(x_q64, self.weight_sim_hif4)
+        elif tag == "SHARQ_TILELANG":
+            _, x_sparse_q, x_sparse_sf, x_res_q, x_res_sf, scale_x = prepared
+            y = tilelang_backend.matmul_sparse_residual(
+                x_sparse_q,
+                x_sparse_sf,
+                x_res_q,
+                x_res_sf,
+                self.weight_q,
+                self.weight_sf,
+                scale_x,
+                self.weight_scale,
+            )
         elif tag == "SHARQ":
             _, a_comp, e, sfa_sparse, qx_res, scale_x_res, scale_x = prepared
             output_scale = (scale_x * self.weight_scale).contiguous()

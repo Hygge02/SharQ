@@ -6,10 +6,11 @@ SharQ is a Blackwell-oriented LLM quantization repo built around this idea: use 
 
 ![SharQ method overview](assets/readme/sharq_method_overview.png)
 
-The repo currently provides three practical modes:
+The repo currently provides four practical modes:
 
 - `NVFP4`: dense FP4 baseline
 - `SHARQ`: fused sparse-residual FP4 kernel path
+- `SHARQ_TILELANG`: TileLang sparse-residual implementation using real packed FP4 payloads and UE4M3 scale bytes
 - `SHARQ_SIM`: pure PyTorch fake-quantized, fake-sparse simulation for accuracy-only reference
 
 ## Clone
@@ -53,12 +54,13 @@ For kernel structure, build details, and low-level CUDA benchmarks, see [`kernel
 - PyTorch with CUDA support
 - CUDA `12.8` recommended
 - NVIDIA RTX 50 / Blackwell `sm_120a` GPU for the default real `SHARQ` kernel path
+- TileLang `0.1.11` for the `SHARQ_TILELANG` path
 
 Install dependencies:
 
 ```bash
 pip install -r requirements.txt
-conda install pybind11 -y
+pip install pybind11
 ```
 
 ## Build
@@ -82,6 +84,12 @@ cmake -S kernels -B kernels/build_cmake_sm100a -DSHARQ_CUDA_ARCH=sm100a
 ```
 
 If you only want a numerical reference path, `SHARQ_SIM` does not require the CUDA extension.
+
+`SHARQ_TILELANG` also does not require the CUTLASS CUDA extension. It JIT-compiles TileLang kernels for real shared-NVFP4 weight quantization, sparse/residual activation quantization, and sparse-residual matmul:
+
+```bash
+python benchmarks/correctness/example_tilelang_sharq_sanity.py --m 2 --n 64 --k 128
+```
 
 ## Evaluation
 
@@ -108,6 +116,15 @@ python model/main.py /path/to/model \
   --dataset wikitext2 \
   --eval_ppl \
   --quant_type SHARQ_SIM
+```
+
+TileLang reference:
+
+```bash
+python model/main.py /path/to/model \
+  --dataset wikitext2 \
+  --eval_ppl \
+  --quant_type SHARQ_TILELANG
 ```
 
 Zero-shot lm-eval:
